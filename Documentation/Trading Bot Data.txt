@@ -1,0 +1,31 @@
+# === TICK (Most powerful for scalping) ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t tick -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 1 SECOND ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t s1 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache--file-name xauusd_m1_bit
+
+# === 1 MINUTE ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t m1 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 5 MINUTE ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t m5 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 15 MINUTE (highly recommended extra) ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t m15 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 30 MINUTE ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t m30 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 1 HOUR ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t h1 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 4 HOUR ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t h4 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+# === 1 DAY ===
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t d1 -p bid -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache
+
+
+
+# Example for 1-minute Ask
+npx dukascopy-node -i xauusd -from 2003-05-04 -to now -t m1 -p ask -v -f csv --date-format iso --utc-offset 0 --retries 5 --retry-on-empty --cache --file-name xauusd_m1_ask
