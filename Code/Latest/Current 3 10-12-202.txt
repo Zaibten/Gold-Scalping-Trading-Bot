@@ -1,121 +1,69 @@
 //+------------------------------------------------------------------+
-//|                         BAKOME_Ultimate_ICT_Gold_Scalper_v4.02.mq5|
-//|                                          BAKOME Trading Systems  |
-//|                                                  Version 4.02    |
+//|                                       BAKOME_Ultimate_ICT_Gold_Scalper_v3.0.mq5 |
+//|                                      BAKOME Trading Systems      |
+//|                                                   Version 3.11   |
 //+------------------------------------------------------------------+
 #property copyright "BAKOME – Fabrice Kitoko"
-#property version   "4.02"
-#property description "ICT Gold Scalper - bias-only, spread bands, $30/0.01 lot, multi-trade, broker-safe SL/TP, trailing always ON"
+#property version   "3.11"
+#property description "ICT Gold Scalper - EMA 9/21/200 | SL 400 | TP 800 | Fixed Filling Mode"
 #property link      "https://github.com/BAKOME-Hub"
+#property strict
 
 #include <Trade/Trade.mqh>
 #include <Trade/PositionInfo.mqh>
 #include <Trade/SymbolInfo.mqh>
 #include <Trade/AccountInfo.mqh>
 
-//+------------------------------------------------------------------+
-//| Enums                                                            |
-//+------------------------------------------------------------------+
-enum ENUM_EA_LOG_LEVEL
-{
-   LOGL_NONE    = 0,
-   LOGL_ERROR   = 1,
-   LOGL_WARNING = 2,
-   LOGL_INFO    = 3,
-   LOGL_DEBUG   = 4
-};
+#define DASH_PREFIX "BAKOME_DASH_"
 
 //+------------------------------------------------------------------+
 //| Input Parameters                                                 |
 //+------------------------------------------------------------------+
-input group "=== Risk & Lot Sizing ==="
-input double MoneyPerMicroLot       = 30.0;   // $ per 0.01 lot (balance scaling)
-input double FixedLotFallback       = 0.01;   // Lot if balance < MoneyPerMicroLot
-input double MaxLotCap              = 100.0;  // Hard cap on lot size
+input group "=== Risk Management ==="
+input double RiskPercent            = 1.0;
+input double MaxDailyRiskPercent    = 5.0;
+input double MaxDailyProfitPercent  = 8.0;
+input int    MaxPositions           = 2;
+input int    MaxDailyTrades         = 20;
 
-input group "=== Trade Size (fixed, broker-safe) ==="
-input double SL_Points              = 60.0;   // Stop Loss in POINTS (broker min distance is respected)
-input double TP_Points              = 120.0;  // Take Profit in POINTS
-input double StopSafetyMarginPts    = 10.0;   // Extra pts above broker min stop distance
-
-input group "=== Trade Frequency ==="
-input int    SecondsBetweenTrades   = 30;     // Min seconds between two new entries (0 = no cooldown)
-
-input group "=== Daily Limits (0 = unlimited) ==="
-input int    MaxPositions           = 10;     // Max concurrent (0 = unlimited)
-input int    MaxDailyTrades         = 0;      // Max trades per day (0 = unlimited)
-input double MaxDailyRiskPercent    = 0.0;    // Daily loss % (0 = disabled)
-input double MaxDailyProfitPercent  = 0.0;    // Daily profit % (0 = disabled)
-input bool   AllowOppositePositions = true;   // Allow buy + sell at same time
-
-input group "=== Spread Bands (points) ==="
-input double Spread_Min             = 40.0;   // Minimum spread - below = too tight, wait
-input double Spread_Normal          = 50.0;   // Normal spread - ideal
-input double Spread_Max             = 100.0;  // Maximum allowed - above = BLOCK trade
-
-input group "=== ATR Filters ==="
-input double MinATR_Points          = 100.0;  // Minimum ATR for Gold (points)
+input group "=== XAUUSD Specific Settings ==="
+input double MinATR_Points          = 80.0;
+input double MinSpreadPoints        = 50.0;
+input double MaxSpreadPoints        = 100.0;
+input int    FixedSL_Points         = 400;      // Stop Loss in Points (400 = $4.00)
+input int    FixedTP_Points         = 800;      // Take Profit in Points (800 = $8.00)
 
 input group "=== ICT Strategy Parameters ==="
 input bool   UseLiquiditySweeps     = true;
 input bool   UseFairValueGaps       = true;
 input bool   UseOrderBlocks         = true;
-input bool   UseSilverBullet        = true;
 input int    LiquidityLookback      = 50;
 input int    FVG_Lookback           = 20;
 input double FVG_MinSizeATR         = 0.5;
 
-input group "=== Session Settings (SERVER time) ==="
-input bool   TradeAllSessions       = true;   // 24/5: ignore session + killzone
-input bool   TradeAsianSession      = false;
-input bool   TradeLondonSession     = true;
-input bool   TradeNewYorkSession    = true;
-input int    LondonStartHour        = 7;
-input int    NewYorkStartHour       = 13;
-
-input group "=== Silver Bullet Windows (SERVER time) ==="
-input bool   LondonSilverBullet     = true;
-input int    LondonKillZoneStart    = 8;
-input int    LondonKillZoneEnd      = 9;
-input bool   NewYorkSilverBullet    = true;
-input int    NYKillZoneStart        = 15;
-input int    NYKillZoneEnd          = 16;
-
 input group "=== Position Management ==="
-input bool   UseBreakEven           = true;
-input double BE_TriggerATR          = 0.5;    // Move to BE after 0.5x ATR profit
-input bool   UseTrailingStop        = true;   // ALWAYS ON
-input double Trail_StartATR         = 0.8;    // Start trailing after 0.8x ATR profit
-input double Trail_StepATR          = 0.4;    // Trail distance = 0.4x ATR behind price
-input bool   UsePartialClose        = false;
-input double PartialClosePercent    = 50.0;
-input double PartialCloseTriggerATR = 1.0;
+input bool   UseBreakEven           = false;
+input bool   UseTrailingStop        = false;
 
 input group "=== Execution Settings ==="
-input int    SlippagePoints         = 50;
+input int    SlippagePoints         = 30;
 input int    OrderRetryCount        = 5;
 input int    OrderRetryDelayMs      = 200;
 
 input group "=== System Settings ==="
-input ENUM_EA_LOG_LEVEL InpLogLevel = LOGL_INFO;
-
-input group "=== On-Chart Dashboard ==="
-input bool   ShowDashboard          = true;
-input ENUM_BASE_CORNER DashCorner   = CORNER_LEFT_UPPER;
-input int    DashX                  = 10;
-input int    DashY                  = 20;
-input int    DashFontSize           = 9;
-input color  DashBgColor            = clrBlack;
-input color  DashTextColor          = clrWhite;
-input color  DashOkColor            = clrLime;
-input color  DashBadColor           = clrTomato;
-input color  DashWarnColor          = clrGold;
+enum ENUM_LOG_LEVEL {
+   LOG_NONE    = 0,
+   LOG_ERROR   = 1,
+   LOG_WARNING = 2,
+   LOG_INFO    = 3,
+   LOG_DEBUG   = 4
+};
+input ENUM_LOG_LEVEL LogLevel = LOG_INFO;
 
 //+------------------------------------------------------------------+
 //| Structures                                                       |
 //+------------------------------------------------------------------+
-struct LiquidityLevel
-{
+struct LiquidityLevel {
    double   price;
    datetime time;
    int      strength;
@@ -124,8 +72,7 @@ struct LiquidityLevel
    double   volume;
 };
 
-struct FairValueGap
-{
+struct FairValueGap {
    double   topPrice;
    double   bottomPrice;
    datetime time;
@@ -134,8 +81,7 @@ struct FairValueGap
    double   size;
 };
 
-struct OrderBlock
-{
+struct OrderBlock {
    double   topPrice;
    double   bottomPrice;
    datetime time;
@@ -144,50 +90,67 @@ struct OrderBlock
    double   volume;
 };
 
-struct PosState
-{
+class CPositionTracker {
+public:
    ulong    ticket;
-   bool     partialDone;
+   datetime openTime;
+   double   openPrice;
+   double   originalSL;
+   double   originalTP;
+   bool     breakEvenSet;
+   bool     trailingActive;
+
+   CPositionTracker() { Reset(); }
+   
+   void Reset() {
+      ticket = 0; openTime = 0; openPrice = 0;
+      originalSL = 0; originalTP = 0;
+      breakEvenSet = false; trailingActive = false;
+   }
 };
 
 //+------------------------------------------------------------------+
 //| Main EA Class                                                    |
 //+------------------------------------------------------------------+
-class CUltimateICTGoldScalper
-{
+class CUltimateICTGoldScalper {
 private:
    CTrade         m_trade;
    CPositionInfo  m_position;
    CSymbolInfo    m_symbol;
    CAccountInfo   m_account;
-
+   
    int            m_atrHandle;
-   int            m_emaHandle;
-
+   int            m_ema9Handle;
+   int            m_ema21Handle;
+   int            m_ema200Handle;
+   
    LiquidityLevel m_liquidityLevels[];
    FairValueGap   m_fairValueGaps[];
    OrderBlock     m_orderBlocks[];
-   PosState       m_states[];
-
+   CPositionTracker m_activePositions[];
+   
    double         m_dayStartBalance;
-   datetime       m_dayStart;
    int            m_todayTradeCount;
-   datetime       m_lastBarTime;
-   datetime       m_lastEntryTime;
+   datetime       m_lastDayReset;
+   datetime       m_lastSignalBarTime;
    double         m_currentATR;
    long           m_magicNumber;
    bool           m_initialized;
+   
+   double         m_ema9, m_ema21, m_ema200;
+   string         m_stopReason;
+   string         m_resumeTimePKT;
+   
+   double         m_calcBuySL, m_calcBuyTP, m_calcSellSL, m_calcSellTP;
+   double         m_calcEntryBuy, m_calcEntrySell;
+   ENUM_ORDER_TYPE_FILLING m_filling;
 
-   //--- logging
-   void LogError(string msg)   { if(InpLogLevel >= LOGL_ERROR)   Print("[ERROR] ", msg); }
-   void LogWarning(string msg) { if(InpLogLevel >= LOGL_WARNING) Print("[WARN] ",  msg); }
-   void LogInfo(string msg)    { if(InpLogLevel >= LOGL_INFO)    Print("[INFO] ",  msg); }
-   void LogDebug(string msg)   { if(InpLogLevel >= LOGL_DEBUG)   Print("[DEBUG] ", msg); }
+   void LogError(string msg)   { if(LogLevel >= LOG_ERROR)   Print("[ERROR] ", msg); }
+   void LogWarning(string msg) { if(LogLevel >= LOG_WARNING) Print("[WARN] ",  msg); }
+   void LogInfo(string msg)    { if(LogLevel >= LOG_INFO)    Print("[INFO] ",  msg); }
 
-   //--- helpers
-   long GenerateMagicNumber()
-   {
-      string str = _Symbol + IntegerToString((int)Period());
+   long GenerateMagicNumber() {
+      string str = _Symbol + IntegerToString(Period());
       uchar arr[];
       StringToCharArray(str, arr);
       long hash = 0;
@@ -196,998 +159,528 @@ private:
       return 100000 + hash;
    }
 
-   bool IsRecoverableError(uint code)
-   {
-      switch(code)
-      {
+   ENUM_ORDER_TYPE_FILLING GetFillingMode() {
+      return ORDER_FILLING_IOC;
+   }
+
+   bool IsRecoverableError(int errorCode) {
+      switch(errorCode) {
          case TRADE_RETCODE_REQUOTE:
          case TRADE_RETCODE_PRICE_CHANGED:
-         case TRADE_RETCODE_PRICE_OFF:
          case TRADE_RETCODE_TIMEOUT:
          case TRADE_RETCODE_CONNECTION:
-         case TRADE_RETCODE_TOO_MANY_REQUESTS:
             return true;
+         default: return false;
+      }
+   }
+
+   bool ExecuteWithRetry(MqlTradeRequest &request, MqlTradeResult &result) {
+      for(int attempt = 0; attempt < OrderRetryCount; attempt++) {
+         ZeroMemory(result);
+         if(OrderSend(request, result)) {
+            if(result.retcode == TRADE_RETCODE_DONE) return true;
+         }
+         if(!IsRecoverableError((int)result.retcode)) break;
+         Sleep(OrderRetryDelayMs * (int)MathPow(2, attempt));
       }
       return false;
    }
 
-   //--- broker's minimum allowed distance between price and SL/TP
-   double StopMinDist()
-   {
-      long stopLvl   = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
-      long freezeLvl = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_FREEZE_LEVEL);
-      double base = (double)(MathMax(stopLvl, freezeLvl) + 1) * _Point;
-      double safe = base + StopSafetyMarginPts * _Point;
-      return safe;
+   string ServerTimeToPKT(datetime serverTime) {
+      datetime gmt = serverTime - TimeGMTOffset();
+      datetime pkt = gmt + 5 * 3600;
+      return TimeToString(pkt, TIME_DATE|TIME_MINUTES|TIME_SECONDS) + " PKT";
    }
 
-   //--- time filters
-   bool IsInKillZone()
-   {
-      if(TradeAllSessions) return true;
-      if(!UseSilverBullet) return true;
+   int GetMarketBias() {
+      double buf[];
+      ArraySetAsSeries(buf, true);
+      
+      if(CopyBuffer(m_ema9Handle, 0, 0, 1, buf) > 0)   m_ema9  = buf[0];
+      if(CopyBuffer(m_ema21Handle, 0, 0, 1, buf) > 0)  m_ema21 = buf[0];
+      if(CopyBuffer(m_ema200Handle, 0, 0, 1, buf) > 0) m_ema200 = buf[0];
 
-      MqlDateTime dt;
-      TimeToStruct(TimeCurrent(), dt);
-      int hour = dt.hour;
-      if(LondonSilverBullet && hour >= LondonKillZoneStart && hour < LondonKillZoneEnd) return true;
-      if(NewYorkSilverBullet && hour >= NYKillZoneStart && hour < NYKillZoneEnd) return true;
-      return false;
+      double price = iClose(_Symbol, PERIOD_M5, 0);
+      
+      if(price > m_ema200 && m_ema9 > m_ema21) return POSITION_TYPE_BUY;
+      if(price < m_ema200 && m_ema9 < m_ema21) return POSITION_TYPE_SELL;
+      return -1;
    }
 
-   bool IsInTradingSession()
-   {
-      if(TradeAllSessions) return true;
-
-      MqlDateTime dt;
-      TimeToStruct(TimeCurrent(), dt);
-      int hour = dt.hour;
-      if(TradeAsianSession   && hour >= 0 && hour < 6) return true;
-      if(TradeLondonSession  && hour >= LondonStartHour  && hour < LondonStartHour + 4) return true;
-      if(TradeNewYorkSession && hour >= NewYorkStartHour && hour < NewYorkStartHour + 4) return true;
-      return false;
+   double GetPriceDistanceInPoints(int points) {
+      // FIX: Hardcoded 0.01 for Gold since the broker uses 2 decimal places
+      // If your broker uses a different point size, change 0.01 accordingly.
+      return points * 0.01; 
    }
 
-   bool TimeFilterOK()
-   {
-      if(!IsInTradingSession()) return false;
-      if(UseSilverBullet && !IsInKillZone()) return false;
-      return true;
-   }
-
-   //--- spread bands
-   bool SpreadFilterOK(double spreadPts)
-   {
-      if(spreadPts < Spread_Min)  return false;
-      if(spreadPts > Spread_Max)  return false;
-      return true;
-   }
-
-   string SpreadStatus(double spreadPts)
-   {
-      if(spreadPts < Spread_Min)  return "TOO TIGHT";
-      if(spreadPts > Spread_Max)  return "TOO HIGH";
-      if(MathAbs(spreadPts - Spread_Normal) <= 5.0) return "NORMAL";
-      return "OK";
-   }
-
-   //--- bias
-   int GetMarketBias()
-   {
-      double ema[];
-      ArraySetAsSeries(ema, true);
-      if(CopyBuffer(m_emaHandle, 0, 0, 1, ema) <= 0) return 0;
-      double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      if(price > ema[0]) return  1;
-      if(price < ema[0]) return -1;
-      return 0;
-   }
-
-   //--- ICT structures (kept for dashboard, unused for signal in v4.02)
-   int CalculateLevelStrength(double price)
-   {
-      int strength = 0;
-      double tolerance = m_currentATR * 0.1;
-      for(int i = 1; i < 100; i++)
-      {
-         double high = iHigh(_Symbol, PERIOD_M5, i);
-         double low  = iLow(_Symbol,  PERIOD_M5, i);
-         if(MathAbs(high - price) < tolerance || MathAbs(low - price) < tolerance)
-            strength++;
-      }
-      return strength;
-   }
-
-   void AddLiquidityLevel(double price, bool isHigh, datetime time)
-   {
-      int size = ArraySize(m_liquidityLevels);
-      ArrayResize(m_liquidityLevels, size + 1);
-      m_liquidityLevels[size].price    = price;
-      m_liquidityLevels[size].isHigh   = isHigh;
-      m_liquidityLevels[size].time     = time;
-      m_liquidityLevels[size].swept    = false;
-      m_liquidityLevels[size].volume   = 0.0;
-      m_liquidityLevels[size].strength = CalculateLevelStrength(price);
-   }
-
-   void UpdateLiquidityLevels()
-   {
-      ArrayResize(m_liquidityLevels, 0);
-      if(iBars(_Symbol, PERIOD_M5) < LiquidityLookback + 120) return;
-
-      for(int i = 3; i < LiquidityLookback; i++)
-      {
-         double h = iHigh(_Symbol, PERIOD_M5, i);
-         double l = iLow(_Symbol,  PERIOD_M5, i);
-
-         if(h > iHigh(_Symbol, PERIOD_M5, i - 1) && h > iHigh(_Symbol, PERIOD_M5, i - 2) &&
-            h > iHigh(_Symbol, PERIOD_M5, i + 1) && h > iHigh(_Symbol, PERIOD_M5, i + 2))
-            AddLiquidityLevel(h, true, iTime(_Symbol, PERIOD_M5, i));
-
-         if(l < iLow(_Symbol, PERIOD_M5, i - 1) && l < iLow(_Symbol, PERIOD_M5, i - 2) &&
-            l < iLow(_Symbol, PERIOD_M5, i + 1) && l < iLow(_Symbol, PERIOD_M5, i + 2))
-            AddLiquidityLevel(l, false, iTime(_Symbol, PERIOD_M5, i));
-      }
-
-      AddLiquidityLevel(iHigh(_Symbol, PERIOD_D1, 1), true,  iTime(_Symbol, PERIOD_D1, 1));
-      AddLiquidityLevel(iLow(_Symbol,  PERIOD_D1, 1), false, iTime(_Symbol, PERIOD_D1, 1));
-      AddLiquidityLevel(iHigh(_Symbol, PERIOD_W1, 1), true,  iTime(_Symbol, PERIOD_W1, 1));
-      AddLiquidityLevel(iLow(_Symbol,  PERIOD_W1, 1), false, iTime(_Symbol, PERIOD_W1, 1));
-   }
-
-   void UpdateFairValueGaps()
-   {
-      ArrayResize(m_fairValueGaps, 0);
-      if(!UseFairValueGaps) return;
-      if(iBars(_Symbol, PERIOD_M5) < FVG_Lookback + 5) return;
-
-      for(int i = 2; i < FVG_Lookback; i++)
-      {
-         int a = i + 1;
-         int c = i - 1;
-         double highA = iHigh(_Symbol, PERIOD_M5, a), lowA = iLow(_Symbol, PERIOD_M5, a);
-         double highC = iHigh(_Symbol, PERIOD_M5, c), lowC = iLow(_Symbol, PERIOD_M5, c);
-
-         if(lowC > highA)
-         {
-            double gap = lowC - highA;
-            if(gap >= m_currentATR * FVG_MinSizeATR)
-            {
-               int n = ArraySize(m_fairValueGaps);
-               ArrayResize(m_fairValueGaps, n + 1);
-               m_fairValueGaps[n].topPrice    = lowC;
-               m_fairValueGaps[n].bottomPrice = highA;
-               m_fairValueGaps[n].time        = iTime(_Symbol, PERIOD_M5, i);
-               m_fairValueGaps[n].isBullish   = true;
-               m_fairValueGaps[n].filled      = false;
-               m_fairValueGaps[n].size        = gap;
-            }
-         }
-         if(highC < lowA)
-         {
-            double gap = lowA - highC;
-            if(gap >= m_currentATR * FVG_MinSizeATR)
-            {
-               int n = ArraySize(m_fairValueGaps);
-               ArrayResize(m_fairValueGaps, n + 1);
-               m_fairValueGaps[n].topPrice    = lowA;
-               m_fairValueGaps[n].bottomPrice = highC;
-               m_fairValueGaps[n].time        = iTime(_Symbol, PERIOD_M5, i);
-               m_fairValueGaps[n].isBullish   = false;
-               m_fairValueGaps[n].filled      = false;
-               m_fairValueGaps[n].size        = gap;
-            }
-         }
-      }
-   }
-
-   void UpdateOrderBlocks()
-   {
-      ArrayResize(m_orderBlocks, 0);
-      if(!UseOrderBlocks) return;
-      if(iBars(_Symbol, PERIOD_M5) < 60) return;
-
-      for(int i = 2; i < 50; i++)
-      {
-         double oi = iOpen(_Symbol,  PERIOD_M5, i), ci = iClose(_Symbol, PERIOD_M5, i);
-         double hi = iHigh(_Symbol,  PERIOD_M5, i), li = iLow(_Symbol,   PERIOD_M5, i);
-         double on = iOpen(_Symbol,  PERIOD_M5, i - 1), cn = iClose(_Symbol, PERIOD_M5, i - 1);
-
-         if(ci < oi && cn > on && cn > hi)
-         {
-            int n = ArraySize(m_orderBlocks);
-            ArrayResize(m_orderBlocks, n + 1);
-            m_orderBlocks[n].topPrice    = hi;
-            m_orderBlocks[n].bottomPrice = li;
-            m_orderBlocks[n].time        = iTime(_Symbol, PERIOD_M5, i);
-            m_orderBlocks[n].isBullish   = true;
-            m_orderBlocks[n].mitigated   = false;
-            m_orderBlocks[n].volume      = (double)iVolume(_Symbol, PERIOD_M5, i);
-         }
-         if(ci > oi && cn < on && cn < li)
-         {
-            int n = ArraySize(m_orderBlocks);
-            ArrayResize(m_orderBlocks, n + 1);
-            m_orderBlocks[n].topPrice    = hi;
-            m_orderBlocks[n].bottomPrice = li;
-            m_orderBlocks[n].time        = iTime(_Symbol, PERIOD_M5, i);
-            m_orderBlocks[n].isBullish   = false;
-            m_orderBlocks[n].mitigated   = false;
-            m_orderBlocks[n].volume      = (double)iVolume(_Symbol, PERIOD_M5, i);
-         }
-      }
-   }
-
-   void UpdateATR()
-   {
+   void UpdateMarketData() {
       double atrBuffer[];
       ArraySetAsSeries(atrBuffer, true);
-      if(CopyBuffer(m_atrHandle, 0, 0, 2, atrBuffer) >= 2)
-         m_currentATR = atrBuffer[1];
+      if(CopyBuffer(m_atrHandle, 0, 0, 1, atrBuffer) > 0)
+         m_currentATR = atrBuffer[0];
+         
+      double slDist = GetPriceDistanceInPoints(FixedSL_Points);
+      double tpDist = GetPriceDistanceInPoints(FixedTP_Points);
+      
+      // FIX: Use SymbolInfoDouble for guaranteed accurate prices
+      double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      
+      if(currentAsk <= 0 || currentBid <= 0) return; // Wait for valid prices
+      
+      m_calcEntryBuy  = currentAsk;
+      m_calcBuySL     = NormalizeDouble(m_calcEntryBuy - slDist, (int)m_symbol.Digits());
+      m_calcBuyTP     = NormalizeDouble(m_calcEntryBuy + tpDist, (int)m_symbol.Digits());
+      
+      m_calcEntrySell = currentBid;
+      m_calcSellSL    = NormalizeDouble(m_calcEntrySell + slDist, (int)m_symbol.Digits());
+      m_calcSellTP    = NormalizeDouble(m_calcEntrySell - tpDist, (int)m_symbol.Digits());
    }
 
-   //--- signal: v4.02 is bias-only, confluence is dead code (kept for future)
-   int GetSignal()
-   {
-      int bias = GetMarketBias();
-      if(bias == 0) return 0;
-      return bias;    // bias-only, always
-   }
-
-   //--- daily stats
-   void ResetDailyStats()
-   {
-      m_todayTradeCount = 0;
-      m_dayStartBalance = m_account.Balance();
-   }
-
-   void CheckNewDay()
-   {
-      datetime d = iTime(_Symbol, PERIOD_D1, 0);
-      if(d != m_dayStart)
-      {
-         m_dayStart = d;
-         ResetDailyStats();
+   void CheckDailyReset() {
+      MqlDateTime now, last;
+      TimeToStruct(TimeCurrent(), now);
+      TimeToStruct(m_lastDayReset, last);
+      if(now.day != last.day || now.mon != last.mon || now.year != last.year) {
+         m_todayTradeCount  = 0;
+         m_dayStartBalance  = m_account.Balance();
+         m_lastDayReset     = TimeCurrent();
+         LogInfo("New trading day started.");
       }
    }
 
-   bool CheckDailyLimits()
-   {
-      if(MaxDailyTrades > 0 && m_todayTradeCount >= MaxDailyTrades) return true;
-
-      if(m_dayStartBalance > 0)
-      {
-         double dailyPL = (m_account.Equity() - m_dayStartBalance) / m_dayStartBalance * 100.0;
-         if(MaxDailyRiskPercent   > 0 && dailyPL <= -MaxDailyRiskPercent)   return true;
-         if(MaxDailyProfitPercent > 0 && dailyPL >=  MaxDailyProfitPercent) return true;
+   bool CheckDailyLimits() {
+      if(m_todayTradeCount >= MaxDailyTrades) {
+         m_stopReason = "Max daily trades reached";
+         m_resumeTimePKT = "Next day";
+         return true;
+      }
+      double dailyPL = (m_account.Equity() - m_dayStartBalance) / m_dayStartBalance * 100.0;
+      if(dailyPL <= -MaxDailyRiskPercent) {
+         m_stopReason = "Daily loss limit reached";
+         m_resumeTimePKT = "Next day";
+         return true;
+      }
+      if(dailyPL >= MaxDailyProfitPercent) {
+         m_stopReason = "Daily profit target reached";
+         m_resumeTimePKT = "Next day";
+         return true;
       }
       return false;
    }
 
-   void CountMyPositions(int &buys, int &sells)
-   {
-      buys = 0; sells = 0;
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         if(!m_position.SelectByIndex(i)) continue;
-         if(m_position.Symbol() != _Symbol || m_position.Magic() != m_magicNumber) continue;
-         if(m_position.PositionType() == POSITION_TYPE_BUY) buys++; else sells++;
+   bool CanOpenNewPosition() {
+      int openPositions = 0;
+      for(int i = 0; i < PositionsTotal(); i++) {
+         if(m_position.SelectByIndex(i) && m_position.Magic() == m_magicNumber && m_position.Symbol() == _Symbol)
+            openPositions++;
       }
-   }
-
-   bool CanOpenNewPosition(bool isBuy)
-   {
-      int buys, sells;
-      CountMyPositions(buys, sells);
-
-      if(MaxPositions > 0 && (buys + sells) >= MaxPositions) return false;
-      if(!AllowOppositePositions && ((isBuy && sells > 0) || (!isBuy && buys > 0))) return false;
-
+      if(openPositions >= MaxPositions) {
+         m_stopReason = "Max positions reached";
+         m_resumeTimePKT = "When position closed";
+         return false;
+      }
+      
       double spread = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      if(!SpreadFilterOK(spread)) return false;
-
-      if(m_currentATR <= 0 || m_currentATR / _Point < MinATR_Points) return false;
-      if(!TimeFilterOK()) return false;
-
-      //--- cooldown between trades
-      if(SecondsBetweenTrades > 0 &&
-         (TimeCurrent() - m_lastEntryTime) < SecondsBetweenTrades) return false;
-
+      if(spread <= MinSpreadPoints) {
+         m_stopReason = "Spread too low (" + DoubleToString(spread,1) + ") Need > 50";
+         m_resumeTimePKT = "When spread > 50";
+         return false;
+      }
+      if(spread >= MaxSpreadPoints) {
+         m_stopReason = "Spread too high (" + DoubleToString(spread,1) + ") Need < 100";
+         m_resumeTimePKT = "When spread < 100";
+         return false;
+      }
+      
+      if(m_currentATR / m_symbol.Point() < MinATR_Points) {
+         m_stopReason = "ATR too low";
+         m_resumeTimePKT = "When ATR higher";
+         return false;
+      }
+      
+      m_stopReason = "";
+      m_resumeTimePKT = "";
       return true;
    }
 
-   double NormalizeVolume(double lot)
-   {
-      double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-      double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-      double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-      if(stepLot <= 0) stepLot = 0.01;
-      if(minLot  <= 0) minLot  = 0.01;
-      if(maxLot  <= 0) maxLot  = 100.0;
-
-      lot = MathFloor(lot / stepLot + 1e-9) * stepLot;
-      lot = MathMax(minLot, MathMin(maxLot, lot));
-      int digits = (int)MathMax(0, MathCeil(-MathLog10(stepLot)));
-      return NormalizeDouble(lot, digits);
+   void CalculateBullishEntry(double &entry, double &sl, double &tp) {
+      entry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      double slDist = GetPriceDistanceInPoints(FixedSL_Points);
+      double tpDist = GetPriceDistanceInPoints(FixedTP_Points);
+      
+      sl = entry - slDist;
+      tp = entry + tpDist;
+      
+      int stopsLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      if(stopsLevel > 0) {
+         double minDist = stopsLevel * 0.01;
+         if(entry - sl < minDist) sl = entry - minDist;
+         if(tp - entry < minDist) tp = entry + minDist;
+      }
+      
+      entry = NormalizeDouble(entry, (int)m_symbol.Digits());
+      sl    = NormalizeDouble(sl,    (int)m_symbol.Digits());
+      tp    = NormalizeDouble(tp,    (int)m_symbol.Digits());
    }
 
-   //--- $30 -> 0.01 lot scaling
-   double CalcBalanceLot()
-   {
-      double balance = m_account.Balance();
-      if(balance < MoneyPerMicroLot) return NormalizeVolume(FixedLotFallback);
-      double microUnits = MathFloor(balance / MoneyPerMicroLot);
-      double lot = microUnits * 0.01;
-      if(lot > MaxLotCap) lot = MaxLotCap;
-      return NormalizeVolume(lot);
+   void CalculateBearishEntry(double &entry, double &sl, double &tp) {
+      entry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      
+      double slDist = GetPriceDistanceInPoints(FixedSL_Points);
+      double tpDist = GetPriceDistanceInPoints(FixedTP_Points);
+      
+      sl = entry + slDist;
+      tp = entry - tpDist;
+      
+      int stopsLevel = (int)SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+      if(stopsLevel > 0) {
+         double minDist = stopsLevel * 0.01;
+         if(sl - entry < minDist) sl = entry + minDist;
+         if(entry - tp < minDist) tp = entry - minDist;
+      }
+      
+      entry = NormalizeDouble(entry, (int)m_symbol.Digits());
+      sl    = NormalizeDouble(sl,    (int)m_symbol.Digits());
+      tp    = NormalizeDouble(tp,    (int)m_symbol.Digits());
    }
 
-   //--- v4.02: broker-safe levels. SL and TP are widened if needed to satisfy stops level.
-   void BuildLevels(bool isBuy, double &entry, double &sl, double &tp)
-   {
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      double minDist = StopMinDist();                     // >= broker stops level + margin
-
-      double slDist = MathMax(SL_Points * _Point, minDist);
-      double tpDist = MathMax(TP_Points * _Point, minDist);
-
-      if(isBuy)
-      {
-         entry = ask;
-         sl = entry - slDist;
-         tp = entry + tpDist;
-         // clamp SL below bid - minDist
-         if(sl > bid - minDist) sl = bid - minDist;
-      }
-      else
-      {
-         entry = bid;
-         sl = entry + slDist;
-         tp = entry - tpDist;
-         if(sl < ask + minDist) sl = ask + minDist;
-      }
-
-      entry = NormalizeDouble(entry, _Digits);
-      sl    = NormalizeDouble(sl,    _Digits);
-      tp    = NormalizeDouble(tp,    _Digits);
-
-      // final validation: SL/TP must be on the correct side of current price
-      if(isBuy)
-      {
-         if(sl >= bid - _Point) sl = NormalizeDouble(bid - minDist, _Digits);
-         if(tp <= ask + _Point) tp = NormalizeDouble(ask + minDist, _Digits);
-      }
-      else
-      {
-         if(sl <= ask + _Point) sl = NormalizeDouble(ask + minDist, _Digits);
-         if(tp >= bid - _Point) tp = NormalizeDouble(bid - minDist, _Digits);
-      }
+   double RiskLot(double riskPercent) {
+      double riskAmount = m_account.Balance() * riskPercent / 100.0;
+      double tickValue  = m_symbol.TickValue();
+      double tickSize   = m_symbol.TickSize();
+      if(tickSize == 0) tickSize = 0.01;
+      
+      double slDistance = GetPriceDistanceInPoints(FixedSL_Points);
+      double lot = riskAmount / (slDistance / tickSize * tickValue);
+      lot = NormalizeDouble(lot, 2);
+      if(lot < 0.01) lot = 0.01;
+      if(lot > 50.0) lot = 50.0;
+      return lot;
    }
 
-   void ExecuteTrade(bool isBuy)
-   {
-      if(!CanOpenNewPosition(isBuy) || CheckDailyLimits()) return;
-
+   void ExecuteTrade(int type) {
+      if(!CanOpenNewPosition() || CheckDailyLimits()) return;
+      
       double entry, sl, tp;
-      BuildLevels(isBuy, entry, sl, tp);
-      double lot = CalcBalanceLot();
+      if(type == ORDER_TYPE_BUY) CalculateBullishEntry(entry, sl, tp);
+      else                      CalculateBearishEntry(entry, sl, tp);
+      
+      double lot = RiskLot(RiskPercent);
 
-      //--- margin safety
-      double margin = 0;
-      ENUM_ORDER_TYPE ot = isBuy ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-      double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-      double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-      if(stepLot <= 0) stepLot = 0.01;
-      if(minLot  <= 0) minLot  = 0.01;
+      MqlTradeRequest request = {};
+      MqlTradeResult  result  = {};
+      
+      request.action       = TRADE_ACTION_DEAL;
+      request.symbol       = _Symbol;
+      request.volume       = lot;
+      request.type         = (ENUM_ORDER_TYPE)type;
+      request.price        = entry;
+      request.sl           = sl;
+      request.tp           = tp;
+      request.deviation    = SlippagePoints;
+      request.magic        = m_magicNumber;
+      request.comment      = "BAKOME_ICT_EA";
+      request.type_filling = m_filling;
 
-      while(lot > minLot && OrderCalcMargin(ot, _Symbol, lot, entry, margin) &&
-            margin > m_account.FreeMargin() * 0.8)
-         lot = NormalizeVolume(lot - stepLot);
-
-      bool ok = false;
-      uint rc = 0;
-      for(int attempt = 0; attempt < OrderRetryCount; attempt++)
-      {
-         m_symbol.RefreshRates();
-         BuildLevels(isBuy, entry, sl, tp);
-
-         bool sent = isBuy ? m_trade.Buy(lot,  _Symbol, 0, sl, tp, "BAKOME_ICT_EA")
-                           : m_trade.Sell(lot, _Symbol, 0, sl, tp, "BAKOME_ICT_EA");
-         rc = m_trade.ResultRetcode();
-
-         if(sent && (rc == TRADE_RETCODE_DONE ||
-                     rc == TRADE_RETCODE_PLACED ||
-                     rc == TRADE_RETCODE_DONE_PARTIAL))
-         {
-            ok = true;
-            break;
-         }
-         if(!IsRecoverableError(rc)) break;
-         Sleep(OrderRetryDelayMs * (1 << attempt));
-      }
-
-      if(ok)
-      {
-         LogInfo(StringFormat("[OPENED] %s %.2f @ %.*f  SL=%.*f  TP=%.*f  (spread=%d pts, ATR=%.0f pts)",
-                              isBuy ? "BUY" : "SELL", lot,
-                              _Digits, entry, _Digits, sl, _Digits, tp,
-                              (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD),
-                              m_currentATR / _Point));
+      if(ExecuteWithRetry(request, result)) {
+         LogInfo(StringFormat("Executed %s %.2f lots @ %.2f | SL: %.2f TP: %.2f",
+                              (type==ORDER_TYPE_BUY)?"BUY":"SELL", lot, entry, sl, tp));
          m_todayTradeCount++;
-         m_lastEntryTime = TimeCurrent();
-      }
-      else
-      {
-         LogError(StringFormat("[REJECTED] rc=%u (%s)  entry=%.*f sl=%.*f tp=%.*f lot=%.2f",
-                               rc, m_trade.ResultRetcodeDescription(),
-                               _Digits, entry, _Digits, sl, _Digits, tp, lot));
-      }
-   }
-
-   //--- position state
-   int StateIndex(ulong ticket)
-   {
-      int n = ArraySize(m_states);
-      for(int i = 0; i < n; i++)
-         if(m_states[i].ticket == ticket) return i;
-      ArrayResize(m_states, n + 1);
-      m_states[n].ticket      = ticket;
-      m_states[n].partialDone = false;
-      return n;
-   }
-
-   void CleanupStates()
-   {
-      for(int i = ArraySize(m_states) - 1; i >= 0; i--)
-      {
-         if(PositionSelectByTicket(m_states[i].ticket)) continue;
-         int n = ArraySize(m_states);
-         for(int k = i; k < n - 1; k++) m_states[k] = m_states[k + 1];
-         ArrayResize(m_states, n - 1);
+         int size = ArraySize(m_activePositions);
+         ArrayResize(m_activePositions, size + 1);
+         m_activePositions[size].ticket     = result.order;
+         m_activePositions[size].openTime   = TimeCurrent();
+         m_activePositions[size].openPrice  = entry;
+         m_activePositions[size].originalSL = sl;
+         m_activePositions[size].originalTP = tp;
+      } else {
+         LogError(StringFormat("Order failed: %d | %s", result.retcode, result.comment));
       }
    }
 
-   //--- manage: SL/TP recovery, partial, breakeven, trailing
-   void ManagePositions()
-   {
-      if(m_currentATR <= 0) return;
-      CleanupStates();
+   //---------------------- Dashboard -----------------------
+   void CreateLabel(string name, int x, int y, string text, color clr, int fontSize = 9, string font = "Arial") {
+      string objName = DASH_PREFIX + name;
+      if(ObjectFind(0, objName) < 0) {
+         ObjectCreate(0, objName, OBJ_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+      }
+      ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+      ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+      ObjectSetString(0, objName, OBJPROP_TEXT, text);
+      ObjectSetInteger(0, objName, OBJPROP_COLOR, clr);
+      ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, fontSize);
+      ObjectSetString(0, objName, OBJPROP_FONT, font);
+   }
 
-      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      if(bid <= 0 || ask <= 0) return;
-      double minDist = StopMinDist();
+   void CreatePanel(string name, int x, int y, int width, int height, color bgColor, color borderColor = clrNONE) {
+      string objName = DASH_PREFIX + name;
+      if(ObjectFind(0, objName) < 0) {
+         ObjectCreate(0, objName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+         ObjectSetInteger(0, objName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+         ObjectSetInteger(0, objName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+         ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+         ObjectSetInteger(0, objName, OBJPROP_BACK, false);
+      }
+      ObjectSetInteger(0, objName, OBJPROP_XDISTANCE, x);
+      ObjectSetInteger(0, objName, OBJPROP_YDISTANCE, y);
+      ObjectSetInteger(0, objName, OBJPROP_XSIZE, width);
+      ObjectSetInteger(0, objName, OBJPROP_YSIZE, height);
+      ObjectSetInteger(0, objName, OBJPROP_BGCOLOR, bgColor);
+      ObjectSetInteger(0, objName, OBJPROP_COLOR, borderColor);
+      ObjectSetInteger(0, objName, OBJPROP_WIDTH, 1);
+   }
 
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         if(!m_position.SelectByIndex(i)) continue;
-         if(m_position.Symbol() != _Symbol || m_position.Magic() != m_magicNumber) continue;
+   void UpdateDashboard() {
+      color bgMain    = C'12,18,28';
+      color bgHeader  = C'22,32,50';
+      color bgSection = C'18,26,40';
+      color clrTitle  = C'255,215,0';
+      color clrLabel  = C'160,185,210';
+      color clrValue  = C'0,230,200';
+      color clr_Green  = C'0,220,100';
+      color clr_Red    = C'255,70,80';
+      color clr_Orange = C'255,150,40';
+      color clr_Yellow = C'255,225,70';
 
-         ulong  ticket = m_position.Ticket();
-         bool   isBuy  = (m_position.PositionType() == POSITION_TYPE_BUY);
-         double open   = m_position.PriceOpen();
-         double sl     = m_position.StopLoss();
-         double tp     = m_position.TakeProfit();
-         double vol    = m_position.Volume();
-         double price  = isBuy ? bid : ask;
-         double profitDist = isBuy ? (price - open) : (open - price);
+      int x0 = 15, y0 = 25, panelW = 380, panelH = 630;
 
-         //--- 1) recover missing SL/TP anchored to open price
-         if(sl == 0.0 || tp == 0.0)
-         {
-            double nsl, ntp;
-            double slDist = MathMax(SL_Points * _Point, minDist);
-            double tpDist = MathMax(TP_Points * _Point, minDist);
-            if(isBuy)
-            {
-               nsl = open - slDist;
-               ntp = open + tpDist;
-               if(nsl > bid - minDist) nsl = bid - minDist;
-            }
-            else
-            {
-               nsl = open + slDist;
-               ntp = open - tpDist;
-               if(nsl < ask + minDist) nsl = ask + minDist;
-            }
-            nsl = NormalizeDouble(nsl, _Digits);
-            ntp = NormalizeDouble(ntp, _Digits);
-            if(!m_trade.PositionModify(ticket, nsl, ntp))
-               LogDebug(StringFormat("Recover SL/TP failed T=%I64u rc=%u", ticket, m_trade.ResultRetcode()));
-            continue;
+      CreatePanel("BG", x0-8, y0-12, panelW, panelH, bgMain, C'50,70,100');
+      CreatePanel("HeaderBG", x0-8, y0-12, panelW, 44, bgHeader, C'50,70,100');
+
+      CreateLabel("Title", x0+8, y0-4, "BAKOME Ultimate ICT Gold Scalper", clrTitle, 11, "Arial Bold");
+      CreateLabel("Version", x0+8, y0+16, "v3.11  |  EMA 9/21/200  |  SL400 TP800  | Fixed", clrLabel, 8);
+
+      int y = y0 + 48;
+
+      CreateLabel("Sym", x0, y, "Symbol: " + _Symbol, clrValue, 9);
+      CreateLabel("Magic", x0+180, y, "Magic: " + IntegerToString(m_magicNumber), clrLabel, 9);
+      y += 17;
+      CreateLabel("ServerTime", x0, y, "Server: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS), clrLabel, 8);
+      y += 14;
+      CreateLabel("PKTTime", x0, y, "Pakistan: " + ServerTimeToPKT(TimeCurrent()), clrYellow, 8);
+      y += 22;
+
+      // EMA
+      CreatePanel("EMA_BG", x0-5, y-4, panelW-20, 85, bgSection);
+      CreateLabel("EMA_Header", x0, y, "▸ EMA VALUES (9 / 21 / 200)", clrTitle, 9, "Arial Bold");
+      y += 17;
+      CreateLabel("EMA9",  x0, y, "EMA 9:    " + DoubleToString(m_ema9,  (int)m_symbol.Digits()), clrValue, 9);
+      y += 15;
+      CreateLabel("EMA21", x0, y, "EMA 21:   " + DoubleToString(m_ema21, (int)m_symbol.Digits()), clrValue, 9);
+      y += 15;
+      CreateLabel("EMA200",x0, y, "EMA 200:  " + DoubleToString(m_ema200,(int)m_symbol.Digits()), clrValue, 9);
+      y += 15;
+      string biasText = (iClose(_Symbol, PERIOD_M5, 0) > m_ema200) ? "BULLISH  ▲" : "BEARISH  ▼";
+      color biasClr  = (iClose(_Symbol, PERIOD_M5, 0) > m_ema200) ? clrGreen : clrRed;
+      CreateLabel("Bias", x0, y, "Bias (vs EMA200):  " + biasText, biasClr, 9, "Arial Bold");
+      y += 28;
+
+      // SL / TP
+      CreatePanel("SLTP_BG", x0-5, y-4, panelW-20, 95, bgSection);
+      CreateLabel("SLTP_Header", x0, y, "▸ FIXED SL / TP (Strict - Never Modified)", clrTitle, 9, "Arial Bold");
+      y += 17;
+      CreateLabel("BuySLTP", x0, y, "BUY  Entry: " + DoubleToString(m_calcEntryBuy, (int)m_symbol.Digits()), clrGreen, 9);
+      y += 14;
+      CreateLabel("BuySL", x0, y, "     SL: " + DoubleToString(m_calcBuySL, (int)m_symbol.Digits()) + " (400 pts)" +
+                                  "   TP: " + DoubleToString(m_calcBuyTP, (int)m_symbol.Digits()) + " (800 pts)", clrLabel, 9);
+      y += 16;
+      CreateLabel("SellSLTP", x0, y, "SELL Entry: " + DoubleToString(m_calcEntrySell, (int)m_symbol.Digits()), clrRed, 9);
+      y += 14;
+      CreateLabel("SellSL", x0, y, "     SL: " + DoubleToString(m_calcSellSL, (int)m_symbol.Digits()) + " (400 pts)" +
+                                  "   TP: " + DoubleToString(m_calcSellTP, (int)m_symbol.Digits()) + " (800 pts)", clrLabel, 9);
+      y += 28;
+
+      // Market
+      CreatePanel("MKT_BG", x0-5, y-4, panelW-20, 82, bgSection);
+      CreateLabel("MKT_Header", x0, y, "▸ MARKET CONDITIONS", clrTitle, 9, "Arial Bold");
+      y += 17;
+      CreateLabel("ATR", x0, y, "ATR (14):  " + DoubleToString(m_currentATR / 0.01, 1) + " pts", clrValue, 9);
+      y += 15;
+      
+      int spread = (int)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
+      color spreadClr = (spread > MinSpreadPoints && spread < MaxSpreadPoints) ? clrGreen : clrRed;
+      CreateLabel("Spread", x0, y, "Spread:   " + IntegerToString(spread) + " pts   (Must be 50 < SP < 100)", spreadClr, 9);
+      y += 15;
+      CreateLabel("Filling", x0, y, "Filling Mode: " + EnumToString(m_filling), clrYellow, 9);
+      y += 15;
+      CreateLabel("TimeFilter", x0, y, "Time Filter: DISABLED (Trade Anytime)", clrGreen, 9);
+      y += 28;
+
+      // Daily
+      double dailyPL = 0;
+      if(m_dayStartBalance > 0)
+         dailyPL = (m_account.Equity() - m_dayStartBalance) / m_dayStartBalance * 100.0;
+
+      CreatePanel("DAILY_BG", x0-5, y-4, panelW-20, 74, bgSection);
+      CreateLabel("DAILY_Header", x0, y, "▸ DAILY PERFORMANCE", clrTitle, 9, "Arial Bold");
+      y += 17;
+      CreateLabel("Trades", x0, y, "Trades today:  " + IntegerToString(m_todayTradeCount) + " / " + IntegerToString(MaxDailyTrades), clrValue, 9);
+      y += 15;
+      color plClr = (dailyPL >= 0) ? clrGreen : clrRed;
+      CreateLabel("DailyPL", x0, y, "Daily P/L:     " + DoubleToString(dailyPL, 2) + "%", plClr, 9, "Arial Bold");
+      y += 15;
+      CreateLabel("Balance", x0, y, "Balance: " + DoubleToString(m_account.Balance(), 2) + 
+                  "     Equity: " + DoubleToString(m_account.Equity(), 2), clrLabel, 8);
+      y += 28;
+
+      // Status
+      CreatePanel("STATUS_BG", x0-5, y-4, panelW-20, 72, bgSection);
+      CreateLabel("STATUS_Header", x0, y, "▸ TRADING STATUS", clrTitle, 9, "Arial Bold");
+      y += 17;
+
+      if(m_stopReason != "") {
+         CreateLabel("Status", x0, y, "STATUS:  ⛔  STOPPED", clrRed, 10, "Arial Bold");
+         y += 16;
+         CreateLabel("Reason", x0, y, "Reason: " + m_stopReason, clrOrange, 8);
+         y += 14;
+         CreateLabel("Resume", x0, y, "Resume: " + m_resumeTimePKT, clrYellow, 8);
+      } else {
+         CreateLabel("Status", x0, y, "STATUS:  ✅  READY TO TRADE", clrGreen, 10, "Arial Bold");
+         y += 16;
+         CreateLabel("Reason", x0, y, "Strict SL400/TP800 + Spread Filter Active", clrLabel, 8);
+         y += 14;
+         CreateLabel("Resume", x0, y, "", clrLabel, 8);
+      }
+      y += 28;
+
+      // Positions
+      CreatePanel("POS_BG", x0-5, y-4, panelW-20, 100, bgSection);
+      CreateLabel("POS_Header", x0, y, "▸ OPEN POSITIONS", clrTitle, 9, "Arial Bold");
+      y += 17;
+
+      int count = 0;
+      for(int i = 0; i < PositionsTotal(); i++) {
+         if(m_position.SelectByIndex(i) && m_position.Magic() == m_magicNumber && m_position.Symbol() == _Symbol) {
+            count++;
+            if(count > 2) break;
+            string dir = (m_position.PositionType() == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+            color dirClr = (m_position.PositionType() == POSITION_TYPE_BUY) ? clrGreen : clrRed;
+            CreateLabel("Pos" + IntegerToString(count) + "A", x0, y, 
+                        "#" + IntegerToString(m_position.Ticket()) + "  " + dir + "  @ " + 
+                        DoubleToString(m_position.PriceOpen(), (int)m_symbol.Digits()), dirClr, 8);
+            y += 13;
+            CreateLabel("Pos" + IntegerToString(count) + "B", x0, y, 
+                        "SL: " + DoubleToString(m_position.StopLoss(), (int)m_symbol.Digits()) + 
+                        "   TP: " + DoubleToString(m_position.TakeProfit(), (int)m_symbol.Digits()) + 
+                        "   P/L: " + DoubleToString(m_position.Profit(), 2), clrLabel, 8);
+            y += 15;
          }
-
-         //--- 2) partial close
-         if(UsePartialClose && profitDist >= m_currentATR * PartialCloseTriggerATR)
-         {
-            int si = StateIndex(ticket);
-            if(!m_states[si].partialDone)
-            {
-               m_states[si].partialDone = true;
-               double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-               double stepLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-               if(stepLot <= 0) stepLot = 0.01;
-               double cv = MathFloor(vol * PartialClosePercent / 100.0 / stepLot + 1e-9) * stepLot;
-               if(cv >= minLot && (vol - cv) >= minLot)
-               {
-                  if(m_trade.PositionClosePartial(ticket, NormalizeDouble(cv, 2)))
-                     continue;
-               }
-            }
-         }
-
-         //--- 3) breakeven + trailing
-         double newSL = sl;
-
-         if(UseBreakEven && profitDist >= m_currentATR * BE_TriggerATR)
-         {
-            double be = open;
-            if(isBuy ? (be > newSL) : (be < newSL)) newSL = be;
-         }
-
-         if(UseTrailingStop && profitDist >= m_currentATR * Trail_StartATR)
-         {
-            double trail = isBuy ? price - m_currentATR * Trail_StepATR
-                                 : price + m_currentATR * Trail_StepATR;
-            if(isBuy ? (trail > newSL) : (trail < newSL)) newSL = trail;
-         }
-
-         newSL = isBuy ? MathMin(newSL, bid - minDist) : MathMax(newSL, ask + minDist);
-         newSL = NormalizeDouble(newSL, _Digits);
-
-         double minImprove = MathMax(_Point * 2.0, m_currentATR * 0.05);
-         bool improved = isBuy ? (newSL > sl + minImprove) : (newSL < sl - minImprove);
-         if(improved)
-         {
-            if(!m_trade.PositionModify(ticket, newSL, tp))
-               LogDebug(StringFormat("Modify SL failed T=%I64u rc=%u (%s)",
-                                     ticket, m_trade.ResultRetcode(),
-                                     m_trade.ResultRetcodeDescription()));
-         }
       }
-   }
-
-   //==================================================================
-   //| ON-CHART DASHBOARD                                              |
-   //==================================================================
-   void SetLabel(string name, string text, int x, int y, color clr)
-   {
-      if(ObjectFind(0, name) < 0)
-      {
-         ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
-         ObjectSetInteger(0, name, OBJPROP_CORNER,     DashCorner);
-         ObjectSetInteger(0, name, OBJPROP_XDISTANCE,  x);
-         ObjectSetInteger(0, name, OBJPROP_YDISTANCE,  y);
-         ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-         ObjectSetInteger(0, name, OBJPROP_HIDDEN,     true);
-         ObjectSetInteger(0, name, OBJPROP_BACK,       false);
-      }
-      ObjectSetInteger(0, name, OBJPROP_COLOR,    clr);
-      ObjectSetInteger(0, name, OBJPROP_FONTSIZE, DashFontSize);
-      ObjectSetString (0, name, OBJPROP_FONT,     "Consolas");
-      ObjectSetString (0, name, OBJPROP_TEXT,     text);
-   }
-
-   void SetPanel(string name, int x, int y, int w, int h, color bg)
-   {
-      if(ObjectFind(0, name) < 0)
-      {
-         ObjectCreate(0, name, OBJ_RECTANGLE_LABEL, 0, 0, 0);
-         ObjectSetInteger(0, name, OBJPROP_CORNER,       DashCorner);
-         ObjectSetInteger(0, name, OBJPROP_XDISTANCE,    x);
-         ObjectSetInteger(0, name, OBJPROP_YDISTANCE,    y);
-         ObjectSetInteger(0, name, OBJPROP_XSIZE,        w);
-         ObjectSetInteger(0, name, OBJPROP_YSIZE,        h);
-         ObjectSetInteger(0, name, OBJPROP_BGCOLOR,      bg);
-         ObjectSetInteger(0, name, OBJPROP_BORDER_TYPE,  BORDER_FLAT);
-         ObjectSetInteger(0, name, OBJPROP_COLOR,        clrDimGray);
-         ObjectSetInteger(0, name, OBJPROP_WIDTH,        1);
-         ObjectSetInteger(0, name, OBJPROP_BACK,         false);
-         ObjectSetInteger(0, name, OBJPROP_SELECTABLE,   false);
-         ObjectSetInteger(0, name, OBJPROP_HIDDEN,       true);
-      }
-      ObjectSetInteger(0, name, OBJPROP_BGCOLOR, bg);
-   }
-
-   void DeleteDashboard()
-   {
-      ObjectsDeleteAll(0, "BAKOME_DASH_");
-   }
-
-   void UpdateDashboard()
-   {
-      if(!ShowDashboard) { DeleteDashboard(); return; }
-
-      int lineH   = DashFontSize + 8;
-      int padX    = 10;
-      int padY    = 8;
-      int panelW  = 430;
-      int panelH  = 32 * lineH + padY * 2;
-
-      SetPanel("BAKOME_DASH_BG", DashX, DashY, panelW, panelH, DashBgColor);
-
-      int x = DashX + padX;
-      int y = DashY + padY;
-      int line = 0;
-
-      //---- header
-      SetLabel("BAKOME_DASH_L0",
-               "BAKOME ICT Gold Scalper  v4.02",
-               x, y + line*lineH, DashTextColor); line++;
-      SetLabel("BAKOME_DASH_L1",
-               "Symbol: " + _Symbol + "   TF: M5   Bias-only mode",
-               x, y + line*lineH, DashTextColor); line++;
-      SetLabel("BAKOME_DASH_L2",
-               "Server: " + TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
-               x, y + line*lineH, DashTextColor); line++;
-      line++;
-
-      //---- state
-      MqlDateTime dt; TimeToStruct(TimeCurrent(), dt);
-      int hour = dt.hour;
-
-      bool inSession = IsInTradingSession();
-      bool inKZ      = IsInKillZone();
-
-      double spread  = (double)SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      bool spreadOK  = SpreadFilterOK(spread);
-      string spreadStr = SpreadStatus(spread);
-
-      bool atrOK = (m_currentATR > 0 && m_currentATR / _Point >= MinATR_Points);
-
-      int buys, sells;
-      CountMyPositions(buys, sells);
-      int totalPos = buys + sells;
-      bool posOK   = (MaxPositions == 0) || (totalPos < MaxPositions);
-      bool oppositeOK = AllowOppositePositions || (buys == 0 || sells == 0);
-
-      bool dailyTradeOK = (MaxDailyTrades == 0) || (m_todayTradeCount < MaxDailyTrades);
-
-      double dailyPL = (m_dayStartBalance > 0)
-                     ? (m_account.Equity() - m_dayStartBalance) / m_dayStartBalance * 100.0
-                     : 0.0;
-      bool dailyLossOK   = (MaxDailyRiskPercent   <= 0) || (dailyPL > -MaxDailyRiskPercent);
-      bool dailyProfitOK = (MaxDailyProfitPercent <= 0) || (dailyPL <  MaxDailyProfitPercent);
-      bool dailyOK       = dailyTradeOK && dailyLossOK && dailyProfitOK;
-
-      int bias = GetMarketBias();
-      string biasStr = (bias ==  1) ? "BULLISH (price > H4 EMA200)"
-                     : (bias == -1) ? "BEARISH (price < H4 EMA200)"
-                                    : "NEUTRAL";
-
-      int signal = GetSignal();
-      string signalStr = (signal ==  1) ? "BUY"
-                       : (signal == -1) ? "SELL"
-                                        : "NONE";
-
-      double balLot = CalcBalanceLot();
-
-      int cooldown = SecondsBetweenTrades > 0
-                   ? (int)(TimeCurrent() - m_lastEntryTime)
-                   : SecondsBetweenTrades;
-      bool cooldownOK = (SecondsBetweenTrades == 0) || (cooldown >= SecondsBetweenTrades);
-
-      //---- filters
-      SetLabel("BAKOME_DASH_L4", "-- FILTERS --", x, y + line*lineH, DashWarnColor); line++;
-
-      SetLabel("BAKOME_DASH_L5",
-               StringFormat("Session      : %s  (hour %02d)",
-                            TradeAllSessions ? "24/5 FORCED" : (inSession ? "OPEN" : "CLOSED"),
-                            hour),
-               x, y + line*lineH,
-               (TradeAllSessions || inSession) ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L6",
-               StringFormat("Kill Zone    : %s",
-                            TradeAllSessions ? "BYPASSED" :
-                            (!UseSilverBullet ? "SB OFF" : (inKZ ? "OPEN" : "CLOSED"))),
-               x, y + line*lineH,
-               (TradeAllSessions || !UseSilverBullet || inKZ) ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L7",
-               StringFormat("Spread       : %.0f pts  [min %.0f | norm %.0f | max %.0f]  %s",
-                            spread, Spread_Min, Spread_Normal, Spread_Max, spreadStr),
-               x, y + line*lineH, spreadOK ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L8",
-               StringFormat("ATR (M5)     : %.0f / %.0f pts",
-                            m_currentATR / _Point, MinATR_Points),
-               x, y + line*lineH, atrOK ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L9",
-               StringFormat("Positions    : %d  %s  (B%d S%d)",
-                            totalPos,
-                            (MaxPositions == 0 ? "[UNLIMITED]" : StringFormat("/ %d", MaxPositions)),
-                            buys, sells),
-               x, y + line*lineH, posOK ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L10",
-               StringFormat("Trades today : %d  %s",
-                            m_todayTradeCount,
-                            (MaxDailyTrades == 0 ? "[UNLIMITED]" : StringFormat("/ %d", MaxDailyTrades))),
-               x, y + line*lineH, dailyTradeOK ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L11",
-               StringFormat("Daily P/L    : %+.2f%%  %s",
-                            dailyPL,
-                            (MaxDailyRiskPercent <= 0 && MaxDailyProfitPercent <= 0)
-                              ? "[NO LIMITS]" : "limited"),
-               x, y + line*lineH,
-               (dailyLossOK && dailyProfitOK) ? DashOkColor : DashBadColor); line++;
-
-      SetLabel("BAKOME_DASH_L12",
-               StringFormat("Next lot     : %.2f  (bal $%.2f / $%.2f)",
-                            balLot, m_account.Balance(), MoneyPerMicroLot),
-               x, y + line*lineH, DashTextColor); line++;
-
-      SetLabel("BAKOME_DASH_L13",
-               StringFormat("Cooldown     : %s  (%ds / %ds)",
-                            cooldownOK ? "READY" : "WAIT",
-                            cooldown, SecondsBetweenTrades),
-               x, y + line*lineH, cooldownOK ? DashOkColor : DashWarnColor); line++;
-
-      line++;
-
-      //---- signal
-      SetLabel("BAKOME_DASH_L15", "-- ICT SIGNAL --", x, y + line*lineH, DashWarnColor); line++;
-
-      SetLabel("BAKOME_DASH_L16",
-               "Bias         : " + biasStr,
-               x, y + line*lineH,
-               (bias == 0) ? DashBadColor : DashOkColor); line++;
-
-      SetLabel("BAKOME_DASH_L17",
-               StringFormat("Liquidity Lv : %d  (sweeps %s)",
-                            ArraySize(m_liquidityLevels),
-                            UseLiquiditySweeps ? "ON" : "OFF"),
-               x, y + line*lineH, DashTextColor); line++;
-
-      SetLabel("BAKOME_DASH_L18",
-               StringFormat("FVGs         : %d  (%s)",
-                            ArraySize(m_fairValueGaps),
-                            UseFairValueGaps ? "ON" : "OFF"),
-               x, y + line*lineH, DashTextColor); line++;
-
-      SetLabel("BAKOME_DASH_L19",
-               StringFormat("Order Blocks : %d  (%s)",
-                            ArraySize(m_orderBlocks),
-                            UseOrderBlocks ? "ON" : "OFF"),
-               x, y + line*lineH, DashTextColor); line++;
-
-      SetLabel("BAKOME_DASH_L20",
-               "Final signal : " + signalStr,
-               x, y + line*lineH,
-               (signal == 0) ? DashBadColor : DashOkColor); line++;
-
-      line++;
-
-      //---- decision
-      SetLabel("BAKOME_DASH_L22", "-- DECISION --", x, y + line*lineH, DashWarnColor); line++;
-
-      string decision;
-      color  decisionColor = DashTextColor;
-
-      if(!inSession)
-      {
-         decision = "WAITING : outside trading session";
-         decisionColor = DashBadColor;
-      }
-      else if(!inKZ)
-      {
-         decision = "WAITING : outside Silver Bullet kill zone";
-         decisionColor = DashBadColor;
-      }
-      else if(spread < Spread_Min)
-      {
-         decision = StringFormat("BLOCKED : spread %.0f < min %.0f (too tight)", spread, Spread_Min);
-         decisionColor = DashBadColor;
-      }
-      else if(spread > Spread_Max)
-      {
-         decision = StringFormat("BLOCKED : spread %.0f > max %.0f (too high)", spread, Spread_Max);
-         decisionColor = DashBadColor;
-      }
-      else if(!atrOK)
-      {
-         decision = "BLOCKED : ATR too low";
-         decisionColor = DashBadColor;
-      }
-      else if(!dailyOK)
-      {
-         decision = "BLOCKED : daily limits reached";
-         decisionColor = DashBadColor;
-      }
-      else if(!posOK)
-      {
-         decision = "BLOCKED : max positions reached";
-         decisionColor = DashBadColor;
-      }
-      else if(!oppositeOK)
-      {
-         decision = "BLOCKED : opposite position open";
-         decisionColor = DashBadColor;
-      }
-      else if(!cooldownOK)
-      {
-         decision = StringFormat("WAITING : cooldown %ds/%ds", cooldown, SecondsBetweenTrades);
-         decisionColor = DashWarnColor;
-      }
-      else if(signal != 0)
-      {
-         decision = (signal == 1) ? "READY : BUY signal" : "READY : SELL signal";
-         decisionColor = DashOkColor;
-      }
-      else
-      {
-         decision = "WAITING : neutral bias";
-         decisionColor = DashWarnColor;
-      }
-
-      SetLabel("BAKOME_DASH_L23", decision, x, y + line*lineH, decisionColor); line++;
-
-      //---- trailing / SL-TP
-      line++;
-      SetLabel("BAKOME_DASH_L25", "-- TRAILING / SL-TP --", x, y + line*lineH, DashWarnColor); line++;
-      SetLabel("BAKOME_DASH_L26",
-               StringFormat("Fixed SL/TP  : %.0f / %.0f pts   (broker min %.0f pts)",
-                            SL_Points, TP_Points, StopMinDist() / _Point),
-               x, y + line*lineH, DashTextColor); line++;
-      SetLabel("BAKOME_DASH_L27",
-               StringFormat("Trailing     : %s  (start %.2f ATR, step %.2f ATR)",
-                            UseTrailingStop ? "ON" : "OFF",
-                            Trail_StartATR, Trail_StepATR),
-               x, y + line*lineH,
-               UseTrailingStop ? DashOkColor : DashBadColor); line++;
-      SetLabel("BAKOME_DASH_L28",
-               StringFormat("Break-even   : %s  (at %.2f ATR)",
-                            UseBreakEven ? "ON" : "OFF", BE_TriggerATR),
-               x, y + line*lineH,
-               UseBreakEven ? DashOkColor : DashBadColor); line++;
-
-      //---- open positions
-      line++;
-      SetLabel("BAKOME_DASH_L30", "-- OPEN POSITIONS --", x, y + line*lineH, DashWarnColor); line++;
-
-      int shown = 0;
-      for(int i = PositionsTotal() - 1; i >= 0 && shown < 5; i--)
-      {
-         if(!m_position.SelectByIndex(i)) continue;
-         if(m_position.Symbol() != _Symbol || m_position.Magic() != m_magicNumber) continue;
-
-         ulong ticket = m_position.Ticket();
-         bool  isBuy  = (m_position.PositionType() == POSITION_TYPE_BUY);
-         double vol   = m_position.Volume();
-         double open  = m_position.PriceOpen();
-         double sl    = m_position.StopLoss();
-         double tp    = m_position.TakeProfit();
-         double prof  = m_position.Profit() + m_position.Swap() + m_position.Commission();
-
-         SetLabel("BAKOME_DASH_P" + IntegerToString(shown),
-                  StringFormat("%s %.2f @ %.*f  SL %.*f  TP %.*f  P/L %+.2f",
-                               isBuy ? "BUY " : "SELL", vol,
-                               _Digits, open, _Digits, sl, _Digits, tp, prof),
-                  x, y + line*lineH,
-                  (prof >= 0) ? DashOkColor : DashBadColor);
-         line++; shown++;
-      }
-      if(shown == 0)
-      {
-         SetLabel("BAKOME_DASH_PNONE", "  (none)", x, y + line*lineH, DashTextColor);
-         line++;
-      }
+      if(count == 0) CreateLabel("NoPos", x0, y, "No open positions", clrLabel, 9);
 
       ChartRedraw(0);
    }
 
 public:
-   CUltimateICTGoldScalper()
-   {
-      m_atrHandle       = INVALID_HANDLE;
-      m_emaHandle       = INVALID_HANDLE;
-      m_dayStartBalance = 0;
-      m_dayStart        = 0;
+   CUltimateICTGoldScalper() {
+      m_initialized = false;
+      m_currentATR = 0;
+      m_ema9 = m_ema21 = m_ema200 = 0;
       m_todayTradeCount = 0;
-      m_lastBarTime     = 0;
-      m_lastEntryTime   = 0;
-      m_currentATR      = 0;
-      m_magicNumber     = 0;
-      m_initialized     = false;
+      m_dayStartBalance = 0;
+      m_lastDayReset = 0;
+      m_lastSignalBarTime = 0;
+      m_stopReason = "";
+      m_resumeTimePKT = "";
+      m_calcBuySL = m_calcBuyTP = m_calcSellSL = m_calcSellTP = 0;
+      m_calcEntryBuy = m_calcEntrySell = 0;
+      m_filling = ORDER_FILLING_IOC;
    }
 
-   ~CUltimateICTGoldScalper() {}
-
-   bool Init()
-   {
-      if(!m_symbol.Name(_Symbol))
-      {
-         LogError("Symbol init failed");
-         return false;
-      }
-      m_symbol.Refresh();
-
-      m_atrHandle = iATR(_Symbol, PERIOD_M5, 14);
-      m_emaHandle = iMA(_Symbol, PERIOD_H4, 200, 0, MODE_EMA, PRICE_CLOSE);
-      if(m_atrHandle == INVALID_HANDLE || m_emaHandle == INVALID_HANDLE)
-      {
-         LogError("Indicators failed");
-         return false;
-      }
-
-      m_magicNumber = GenerateMagicNumber();
-      m_trade.SetExpertMagicNumber((ulong)m_magicNumber);
-      m_trade.SetDeviationInPoints(SlippagePoints);
-      m_trade.SetTypeFillingBySymbol(_Symbol);
-      m_trade.SetAsyncMode(false);
-
-      m_dayStart = iTime(_Symbol, PERIOD_D1, 0);
-      ResetDailyStats();
-      UpdateATR();
-
-      m_initialized = true;
-      LogInfo("BAKOME EA v4.02 initialized. Magic: " + IntegerToString(m_magicNumber));
-      LogInfo(StringFormat("Lot: $%.0f -> 0.01 | SL %.0f | TP %.0f | Spread %.0f-%.0f | BrokerMinStop %.0f pts | Cooldown %ds | Trailing ON",
-                           MoneyPerMicroLot, SL_Points, TP_Points, Spread_Min, Spread_Max,
-                           StopMinDist() / _Point, SecondsBetweenTrades));
-      UpdateDashboard();
-      return true;
-   }
-
-   void Deinit()
-   {
-      if(m_atrHandle != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
-      if(m_emaHandle != INVALID_HANDLE) IndicatorRelease(m_emaHandle);
-      m_atrHandle = INVALID_HANDLE;
-      m_emaHandle = INVALID_HANDLE;
+   ~CUltimateICTGoldScalper() {
+      if(m_atrHandle    != INVALID_HANDLE) IndicatorRelease(m_atrHandle);
+      if(m_ema9Handle   != INVALID_HANDLE) IndicatorRelease(m_ema9Handle);
+      if(m_ema21Handle  != INVALID_HANDLE) IndicatorRelease(m_ema21Handle);
+      if(m_ema200Handle != INVALID_HANDLE) IndicatorRelease(m_ema200Handle);
       DeleteDashboard();
    }
 
-   void OnTick()
-   {
+   void DeleteDashboard() { ObjectsDeleteAll(0, DASH_PREFIX); }
+
+   bool Init() {
+      m_symbol.Name(_Symbol);
+      m_symbol.Refresh();
+
+      m_atrHandle    = iATR(_Symbol, PERIOD_M5, 14);
+      m_ema9Handle   = iMA(_Symbol, PERIOD_M5, 9,   0, MODE_EMA, PRICE_CLOSE);
+      m_ema21Handle  = iMA(_Symbol, PERIOD_M5, 21,  0, MODE_EMA, PRICE_CLOSE);
+      m_ema200Handle = iMA(_Symbol, PERIOD_M5, 200, 0, MODE_EMA, PRICE_CLOSE);
+
+      if(m_atrHandle == INVALID_HANDLE || m_ema9Handle == INVALID_HANDLE || 
+         m_ema21Handle == INVALID_HANDLE || m_ema200Handle == INVALID_HANDLE) {
+         LogError("Failed to create indicators");
+         return false;
+      }
+
+      m_filling = GetFillingMode();
+
+      m_magicNumber     = GenerateMagicNumber();
+      m_dayStartBalance = m_account.Balance();
+      m_todayTradeCount = 0;
+      m_lastDayReset    = TimeCurrent();
+      m_initialized     = true;
+
+      EventSetTimer(1);
+      LogInfo("BAKOME EA v3.11 started | Filling: " + EnumToString(m_filling) + " | SL400 TP800");
+      return true;
+   }
+
+   void OnTick() {
       if(!m_initialized) return;
 
-      m_symbol.RefreshRates();
-      UpdateATR();
-      CheckNewDay();
-      ManagePositions();
+      CheckDailyReset();
+      UpdateMarketData();
+      GetMarketBias();
 
-      datetime bar = iTime(_Symbol, PERIOD_M5, 0);
-      if(bar != m_lastBarTime)
-      {
-         m_lastBarTime = bar;
-         UpdateLiquidityLevels();
-         UpdateFairValueGaps();
-         UpdateOrderBlocks();
+      for(int i = ArraySize(m_activePositions) - 1; i >= 0; i--) {
+         if(!m_position.SelectByTicket(m_activePositions[i].ticket)) {
+            ArrayRemove(m_activePositions, i, 1);
+            continue;
+         }
+      }
+
+      // Only trade once per bar to prevent duplicate entries on every tick
+      datetime currentBarTime = iTime(_Symbol, PERIOD_M5, 0);
+      if(currentBarTime != m_lastSignalBarTime) {
+         int bias = GetMarketBias();
+         if(bias == POSITION_TYPE_BUY)  {
+            ExecuteTrade(ORDER_TYPE_BUY);
+            m_lastSignalBarTime = currentBarTime;
+         }
+         if(bias == POSITION_TYPE_SELL) {
+            ExecuteTrade(ORDER_TYPE_SELL);
+            m_lastSignalBarTime = currentBarTime;
+         }
       }
 
       UpdateDashboard();
+   }
 
-      //--- trade on every tick (not every bar), paced by cooldown
-      int signal = GetSignal();
-      if(signal ==  1) ExecuteTrade(true);
-      else if(signal == -1) ExecuteTrade(false);
+   void OnTimer() {
+      if(m_initialized) UpdateDashboard();
    }
 };
 
 //+------------------------------------------------------------------+
-//| Global instance                                                  |
-//+------------------------------------------------------------------+
-CUltimateICTGoldScalper g_EA;
+CUltimateICTGoldScalper EA;
 
-int OnInit()
-{
-   if(!g_EA.Init()) return(INIT_FAILED);
-   return(INIT_SUCCEEDED);
+int OnInit() {
+   if(!EA.Init()) return INIT_FAILED;
+   return INIT_SUCCEEDED;
 }
 
-void OnTick()
-{
-   g_EA.OnTick();
+void OnDeinit(const int reason) {
+   EventKillTimer();
+   EA.DeleteDashboard();
 }
 
-void OnDeinit(const int reason)
-{
-   g_EA.Deinit();
-   Print("EA removed: ", reason);
-}
+void OnTick()  { EA.OnTick(); }
+void OnTimer() { EA.OnTimer(); }
 //+------------------------------------------------------------------+
