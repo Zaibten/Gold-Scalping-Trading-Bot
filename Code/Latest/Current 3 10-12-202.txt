@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                       BAKOME_Ultimate_ICT_Gold_Scalper_v3.0.mq5 |
 //|                                      BAKOME Trading Systems      |
-//|                                                   Version 3.11   |
+//|                                                   Version 3.12   |
 //+------------------------------------------------------------------+
 #property copyright "BAKOME – Fabrice Kitoko"
-#property version   "3.11"
-#property description "ICT Gold Scalper - EMA 9/21/200 | SL 400 | TP 800 | Fixed Filling Mode"
+#property version   "3.12"
+#property description "ICT Gold Scalper - EMA 9/21/200 | SL 400 | TP 100 | Fixed Filling Mode"
 #property link      "https://github.com/BAKOME-Hub"
 #property strict
 
@@ -30,8 +30,9 @@ input group "=== XAUUSD Specific Settings ==="
 input double MinATR_Points          = 80.0;
 input double MinSpreadPoints        = 50.0;
 input double MaxSpreadPoints        = 100.0;
-input int    FixedSL_Points         = 400;      // Stop Loss in Points (400 = $4.00)
-input int    FixedTP_Points         = 800;      // Take Profit in Points (800 = $8.00)
+// 400 = $4.00 Stop Loss | 100 = $1.00 Take Profit on a 2-digit Gold chart
+input int    FixedSL_Points         = 400;      // Stop Loss in Points
+input int    FixedTP_Points         = 100;      // Take Profit in Points
 
 input group "=== ICT Strategy Parameters ==="
 input bool   UseLiquiditySweeps     = true;
@@ -208,8 +209,7 @@ private:
    }
 
    double GetPriceDistanceInPoints(int points) {
-      // FIX: Hardcoded 0.01 for Gold since the broker uses 2 decimal places
-      // If your broker uses a different point size, change 0.01 accordingly.
+      // Hardcoded 0.01 for Gold since the broker uses 2 decimal places
       return points * 0.01; 
    }
 
@@ -222,7 +222,6 @@ private:
       double slDist = GetPriceDistanceInPoints(FixedSL_Points);
       double tpDist = GetPriceDistanceInPoints(FixedTP_Points);
       
-      // FIX: Use SymbolInfoDouble for guaranteed accurate prices
       double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       
@@ -269,12 +268,20 @@ private:
       return false;
    }
 
+   // FIXED: This function now correctly resets the "Max positions reached" status
    bool CanOpenNewPosition() {
       int openPositions = 0;
       for(int i = 0; i < PositionsTotal(); i++) {
          if(m_position.SelectByIndex(i) && m_position.Magic() == m_magicNumber && m_position.Symbol() == _Symbol)
             openPositions++;
       }
+      
+      // If we previously stopped due to max positions, and now we have 0, clear the stop reason
+      if(openPositions == 0 && m_stopReason == "Max positions reached") {
+         m_stopReason = "";
+         m_resumeTimePKT = "";
+      }
+
       if(openPositions >= MaxPositions) {
          m_stopReason = "Max positions reached";
          m_resumeTimePKT = "When position closed";
@@ -293,14 +300,17 @@ private:
          return false;
       }
       
-      if(m_currentATR / m_symbol.Point() < MinATR_Points) {
+      if(m_currentATR / 0.01 < MinATR_Points) {
          m_stopReason = "ATR too low";
          m_resumeTimePKT = "When ATR higher";
          return false;
       }
       
-      m_stopReason = "";
-      m_resumeTimePKT = "";
+      // Only clear if we aren't stopped for max positions
+      if(openPositions < MaxPositions) {
+         m_stopReason = "";
+         m_resumeTimePKT = "";
+      }
       return true;
    }
 
@@ -455,7 +465,7 @@ private:
       CreatePanel("HeaderBG", x0-8, y0-12, panelW, 44, bgHeader, C'50,70,100');
 
       CreateLabel("Title", x0+8, y0-4, "BAKOME Ultimate ICT Gold Scalper", clrTitle, 11, "Arial Bold");
-      CreateLabel("Version", x0+8, y0+16, "v3.11  |  EMA 9/21/200  |  SL400 TP800  | Fixed", clrLabel, 8);
+      CreateLabel("Version", x0+8, y0+16, "v3.12  |  EMA 9/21/200  |  SL400 TP100  | Fixed", clrLabel, 8);
 
       int y = y0 + 48;
 
@@ -489,12 +499,12 @@ private:
       CreateLabel("BuySLTP", x0, y, "BUY  Entry: " + DoubleToString(m_calcEntryBuy, (int)m_symbol.Digits()), clrGreen, 9);
       y += 14;
       CreateLabel("BuySL", x0, y, "     SL: " + DoubleToString(m_calcBuySL, (int)m_symbol.Digits()) + " (400 pts)" +
-                                  "   TP: " + DoubleToString(m_calcBuyTP, (int)m_symbol.Digits()) + " (800 pts)", clrLabel, 9);
+                                  "   TP: " + DoubleToString(m_calcBuyTP, (int)m_symbol.Digits()) + " (100 pts)", clrLabel, 9);
       y += 16;
       CreateLabel("SellSLTP", x0, y, "SELL Entry: " + DoubleToString(m_calcEntrySell, (int)m_symbol.Digits()), clrRed, 9);
       y += 14;
       CreateLabel("SellSL", x0, y, "     SL: " + DoubleToString(m_calcSellSL, (int)m_symbol.Digits()) + " (400 pts)" +
-                                  "   TP: " + DoubleToString(m_calcSellTP, (int)m_symbol.Digits()) + " (800 pts)", clrLabel, 9);
+                                  "   TP: " + DoubleToString(m_calcSellTP, (int)m_symbol.Digits()) + " (100 pts)", clrLabel, 9);
       y += 28;
 
       // Market
@@ -544,7 +554,7 @@ private:
       } else {
          CreateLabel("Status", x0, y, "STATUS:  ✅  READY TO TRADE", clrGreen, 10, "Arial Bold");
          y += 16;
-         CreateLabel("Reason", x0, y, "Strict SL400/TP800 + Spread Filter Active", clrLabel, 8);
+         CreateLabel("Reason", x0, y, "Strict SL400/TP100 + Spread Filter Active", clrLabel, 8);
          y += 14;
          CreateLabel("Resume", x0, y, "", clrLabel, 8);
       }
@@ -628,7 +638,7 @@ public:
       m_initialized     = true;
 
       EventSetTimer(1);
-      LogInfo("BAKOME EA v3.11 started | Filling: " + EnumToString(m_filling) + " | SL400 TP800");
+      LogInfo("BAKOME EA v3.12 started | Filling: " + EnumToString(m_filling) + " | SL400 TP100");
       return true;
    }
 
